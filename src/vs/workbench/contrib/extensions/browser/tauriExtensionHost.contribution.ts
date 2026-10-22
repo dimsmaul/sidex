@@ -52,6 +52,7 @@ import { URI } from '../../../../base/common/uri.js';
 import { Range } from '../../../../editor/common/core/range.js';
 import {
 	bootstrapExtensionPlatform,
+	restartExtensionPlatform,
 	wasmSyncDocument,
 	wasmCloseDocument,
 	wasmSyncWorkspaceFolders,
@@ -65,7 +66,12 @@ import {
 } from './extensionPlatformClient.js';
 import { listen } from '@tauri-apps/api/event';
 import { ITerminalService, ITerminalGroupService } from '../../terminal/browser/terminal.js';
-import { INotificationService, Severity as _Severity } from '../../../../platform/notification/common/notification.js';
+import { INotificationService, Severity } from '../../../../platform/notification/common/notification.js';
+import { Action2, registerAction2 } from '../../../../platform/actions/common/actions.js';
+import { localize2 } from '../../../../nls.js';
+import { ExtensionsLocalizedLabel } from '../../../../platform/extensionManagement/common/extensionManagement.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
+import type { IQuickPickItem } from '../../../../platform/quickinput/common/quickInput.js';
 import { IProgressService, ProgressLocation } from '../../../../platform/progress/common/progress.js';
 import { IOpenerService } from '../../../../platform/opener/common/opener.js';
 import { IDebugService } from '../../debug/common/debug.js';
@@ -135,6 +141,17 @@ interface HandshakeMessage {
 
 type ProviderCapabilities = Record<string, unknown[][]>;
 
+const IMPORT_COMMAND_ID = 'sidex.extensions.importFromVSCode';
+const IMPORT_OFFERED_KEY = 'sidex.vscodeImport.offered';
+
+interface IImportCandidate {
+	id: string;
+	name: string;
+	version: string;
+	source: string;
+	path: string;
+}
+
 class TauriExtensionHostContribution extends Disposable implements IWorkbenchContribution {
 
 	static readonly ID = 'workbench.contrib.tauriExtensionHost';
@@ -198,8 +215,23 @@ class TauriExtensionHostContribution extends Disposable implements IWorkbenchCon
 		@IWebviewViewService private readonly webviewViewService: IWebviewViewService,
 		@IWebviewService private readonly webviewService: IWebviewService,
 		@ICodeEditorService private readonly codeEditorService: ICodeEditorService,
+		@IStorageService private readonly storageService: IStorageService,
 	) {
 		super();
+		const runImport = () => this._importFromVSCode();
+		this._register(registerAction2(class extends Action2 {
+			constructor() {
+				super({
+					id: IMPORT_COMMAND_ID,
+					title: localize2('sidex.importFromVSCode', 'Import Extensions from VS Code / VSCodium'),
+					category: ExtensionsLocalizedLabel,
+					f1: true,
+				});
+			}
+			run(): Promise<void> {
+				return runImport();
+			}
+		}));
 		this._init();
 	}
 
@@ -225,7 +257,88 @@ class TauriExtensionHostContribution extends Disposable implements IWorkbenchCon
 			this._connect(bootstrap.transport.endpoint);
 		} catch (error) {
 			this.logService.warn(`[ExtHost] platform bootstrap failed ${(error as Error)?.message ?? String(error)}`);
+			return;
 		}
+		await this._offerVSCodeImport();
+	}
+
+	private async _offerVSCodeImport(): Promise<void> {
+		try {
+			if (this.storageService.get(IMPORT_OFFERED_KEY, StorageScope.APPLICATION)) {
+				return;
+			}
+			const { invoke } = await import('@tauri-apps/api/core');
+			const candidates = await invoke<IImportCandidate[]>('vscode_import_candidates');
+			if (candidates.length === 0) {
+				return;
+			}
+			this.storageService.store(IMPORT_OFFERED_KEY, true, StorageScope.APPLICATION, StorageTarget.MACHINE);
+			this.notificationService.prompt(
+				Severity.Info,
+				`Found ${candidates.length} extensions in VS Code / VSCodium. Import them into SideX?`,
+				[
+					{ label: 'Import', run: () => this.commandService.executeCommand(IMPORT_COMMAND_ID) },
+					{ label: 'Not now', run: () => { } },
+				],
+			);
+		} catch (err: any) {
+			this.logService.warn(`[ExtHost] VS Code import offer failed: ${err?.message ?? err}`);
+		}
+	}
+
+	private async _importFromVSCode(): Promise<void> {
+		const { invoke } = await import('@tauri-apps/api/core');
+		const candidates = await invoke<IImportCandidate[]>('vscode_import_candidates');
+		if (candidates.length === 0) {
+			this.notificationService.info('No VS Code or VSCodium extensions found to import.');
+			return;
+		}
+
+		const picker = this.quickInputService.createQuickPick<IQuickPickItem & { extId: string }>();
+		picker.canSelectMany = true;
+		picker.title = 'Import Extensions from VS Code / VSCodium';
+		picker.items = candidates.map(c => ({ label: c.name, description: `${c.id} v${c.version}`, detail: c.source, extId: c.id }));
+		picker.selectedItems = picker.items as readonly (IQuickPickItem & { extId: string })[];
+		const picked = await new Promise<string[] | undefined>(resolve => {
+			picker.onDidAccept(() => { resolve(picker.selectedItems.map(i => i.extId)); picker.hide(); });
+			picker.onDidHide(() => { resolve(undefined); picker.dispose(); });
+			picker.show();
+		});
+		if (!picked || picked.length === 0) {
+			return;
+		}
+
+		const imported = await invoke<{ id: string }[]>('vscode_import_extensions', { ids: picked });
+		if (imported.length > 0) {
+			// Restart spawns the host on a new port; the old socket and cached port are stale.
+			const status = await restartExtensionPlatform();
+			if (status.port) {
+				this._reconnectTo(`ws://127.0.0.1:${status.port}`);
+			}
+		}
+		this.notificationService.prompt(
+			Severity.Info,
+			`Linked ${imported.length} extension(s) from VS Code / VSCodium.`,
+			imported.length > 0
+				? [{ label: 'Reload Window', run: () => this.commandService.executeCommand('workbench.action.reloadWindow') }]
+				: [],
+		);
+	}
+
+	private _reconnectTo(endpoint: string): void {
+		clearTimeout(this._reconnectTimer);
+		this._reconnectTimer = undefined;
+		this._reconnectAttempts = 0;
+		const old = this._ws;
+		this._ws = undefined;
+		if (old) {
+			old.onclose = null;
+			old.close();
+		}
+		this._connected = false;
+		this._handshakeSeen = false;
+		this._rejectPending('extension host restarted');
+		this._connect(endpoint);
 	}
 
 	private async _hotLoadInstalledExtension(result: InstallExtensionResult): Promise<void> {

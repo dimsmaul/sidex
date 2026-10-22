@@ -906,6 +906,8 @@ pub fn run() {
             commands::uninstall_extension,
             commands::list_installed_extensions,
             commands::list_available_extensions,
+            commands::vscode_import_candidates,
+            commands::vscode_import_extensions,
             // Marketplace & contributions (sidex-extensions)
             commands::extension_search_marketplace,
             commands::extension_get_contributions,

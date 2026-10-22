@@ -4,12 +4,13 @@ use sidex_extensions::contributions::{parse_contributions, ContributionPoint};
 use sidex_extensions::installer::{
     install_from_vsix as crate_install_from_vsix, uninstall as crate_uninstall,
 };
-use sidex_extensions::manifest::sanitize_ext_id;
+use sidex_extensions::manifest::{is_version_greater, parse_manifest, sanitize_ext_id};
 use sidex_extensions::marketplace::MarketplaceClient;
 use sidex_extensions::paths::user_extensions_dir;
 use sidex_extensions::vsix::{install_package, unpack_vsix, validate_vsix};
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::AppHandle;
 use tokio::sync::Mutex;
@@ -117,6 +118,18 @@ pub async fn install_extension_from_url(url: String) -> Result<InstalledExtensio
 
 #[tauri::command]
 pub async fn uninstall_extension(extension_id: String) -> Result<(), String> {
+    // Linked extensions live in VS Code / VSCodium's folder: only unlink, never delete there.
+    let mut linked = read_linked_ids();
+    if let Some(id) = linked
+        .iter()
+        .find(|l| l.eq_ignore_ascii_case(&extension_id))
+        .cloned()
+    {
+        linked.remove(&id);
+        write_linked_ids(&linked)?;
+        log::info!("unlinked extension {id}");
+        return Ok(());
+    }
     let safe_id = sanitize_ext_id(&extension_id).map_err(|e| format!("{e:#}"))?;
     let target_dir = user_extensions_dir();
     let ext_dir = target_dir.join(&safe_id);
@@ -153,6 +166,159 @@ pub async fn list_installed_extensions(app: AppHandle) -> Result<Vec<InstalledEx
                 path,
             });
         }
+    }
+    let linked = read_linked_ids();
+    if !linked.is_empty() {
+        for (id, c) in scan_import_sources() {
+            if linked.contains(&id) && !out.iter().any(|e| e.id == id) {
+                out.push(InstalledExtension {
+                    id,
+                    name: c.name,
+                    version: c.version,
+                    path: c.path,
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
+// Import from other editors = link by id. Their dirs are never added to the
+// live search path (issue #50): only the ids the user picked (linked.json) are
+// loaded in place by `scan_extensions`, and nothing is copied or deleted there.
+
+fn linked_path() -> PathBuf {
+    user_extensions_dir().join("linked.json")
+}
+
+/// Missing or invalid file -> empty set.
+pub(crate) fn read_linked_ids() -> HashSet<String> {
+    fs::read_to_string(linked_path())
+        .ok()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .map(|v| v.into_iter().collect())
+        .unwrap_or_default()
+}
+
+fn write_linked_ids(ids: &HashSet<String>) -> Result<(), String> {
+    let mut sorted: Vec<&String> = ids.iter().collect();
+    sorted.sort();
+    let json = serde_json::to_string_pretty(&sorted).map_err(|e| e.to_string())?;
+    fs::write(linked_path(), json).map_err(|e| format!("write linked.json: {e}"))
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImportCandidate {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub source: String,
+    pub path: String,
+}
+
+fn import_sources() -> Vec<(&'static str, PathBuf)> {
+    let Some(home) = dirs::home_dir() else {
+        return vec![];
+    };
+    vec![
+        ("VS Code", home.join(".vscode").join("extensions")),
+        ("VSCodium", home.join(".vscode-oss").join("extensions")),
+    ]
+}
+
+/// Folder names listed in `<dir>/.obsolete` (uninstalled leftovers).
+fn obsolete_folders(dir: &Path) -> HashSet<String> {
+    fs::read_to_string(dir.join(".obsolete"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<HashMap<String, serde_json::Value>>(&s).ok())
+        .map(|m| m.into_keys().collect())
+        .unwrap_or_default()
+}
+
+/// Newest version per canonical id across VS Code and the OSS build (VS Code wins a tie).
+/// Shared by the import picker and `scan_extensions`.
+pub(crate) fn scan_import_sources() -> HashMap<String, ImportCandidate> {
+    let mut best: HashMap<String, ImportCandidate> = HashMap::new();
+
+    for (source, dir) in import_sources() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        let obsolete = obsolete_folders(&dir);
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let folder = entry.file_name().to_string_lossy().to_string();
+            if !path.is_dir() || obsolete.contains(&folder) {
+                continue;
+            }
+            let Ok(manifest) = parse_manifest(&path.join("package.json")) else {
+                continue;
+            };
+            let id = manifest.canonical_id();
+            if sanitize_ext_id(&id).is_err() {
+                continue;
+            }
+            if let Some(cur) = best.get(&id) {
+                if !is_version_greater(&manifest.version, &cur.version) {
+                    continue;
+                }
+            }
+            let info = to_installed(&manifest, &path);
+            best.insert(
+                id,
+                ImportCandidate {
+                    id: info.id,
+                    name: info.name,
+                    version: info.version,
+                    source: source.to_string(),
+                    path: info.path,
+                },
+            );
+        }
+    }
+
+    best
+}
+
+#[tauri::command]
+pub async fn vscode_import_candidates() -> Result<Vec<ImportCandidate>, String> {
+    let linked = read_linked_ids();
+    let installed_dir = user_extensions_dir();
+    let mut out: Vec<ImportCandidate> = scan_import_sources()
+        .into_values()
+        .filter(|c| !linked.contains(&c.id))
+        .filter(|c| {
+            sanitize_ext_id(&c.id).is_ok_and(|safe| !installed_dir.join(safe).exists())
+        })
+        .collect();
+    out.sort_by_key(|c| c.name.to_lowercase());
+    Ok(out)
+}
+
+/// Links the picked ids: records them in `linked.json`, copies nothing.
+/// Only ids found by `scan_import_sources` are accepted (trust boundary).
+#[tauri::command]
+pub async fn vscode_import_extensions(ids: Vec<String>) -> Result<Vec<InstalledExtension>, String> {
+    let mut available = scan_import_sources();
+    let mut linked = read_linked_ids();
+    let mut out = Vec::new();
+    for id in ids {
+        match available.remove(&id) {
+            Some(c) => {
+                log::info!("linked extension {id} from {}", c.path);
+                linked.insert(id);
+                out.push(InstalledExtension {
+                    id: c.id,
+                    name: c.name,
+                    version: c.version,
+                    path: c.path,
+                });
+            }
+            None => log::warn!("link failed: {id} not found in VS Code/VSCodium folders"),
+        }
+    }
+    if !out.is_empty() {
+        write_linked_ids(&linked)?;
     }
     Ok(out)
 }

@@ -1,3 +1,4 @@
+use crate::commands::extensions::{read_linked_ids, scan_import_sources};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -567,6 +568,31 @@ pub fn scan_extensions(app: &AppHandle, paths: &[PathBuf]) -> Vec<ExtensionManif
     let disable_prefixes = ["anysphere.cursor", "cursor."];
 
     let mut by_id: HashMap<String, ExtensionManifest> = HashMap::new();
+    let mut consider = |ext_dir: &Path| {
+        let manifest = if ext_dir.join("sidex.toml").exists() {
+            read_wasm_extension_manifest(app, ext_dir)
+        } else {
+            read_extension_manifest(app, ext_dir)
+        };
+        let Ok(manifest) = manifest else {
+            return;
+        };
+
+        if disable_ids.contains(&manifest.id)
+            || disable_prefixes.iter().any(|p| manifest.id.starts_with(p))
+        {
+            return;
+        }
+
+        let replace = match by_id.get(&manifest.id) {
+            Some(existing) => is_version_greater(&manifest.version, &existing.version),
+            None => true,
+        };
+        if replace {
+            by_id.insert(manifest.id.clone(), manifest);
+        }
+    };
+
     for search_path in paths {
         let Ok(entries) = fs::read_dir(search_path) else {
             continue;
@@ -579,29 +605,16 @@ pub fn scan_extensions(app: &AppHandle, paths: &[PathBuf]) -> Vec<ExtensionManif
             if !file_type.is_dir() {
                 continue;
             }
+            consider(&entry.path());
+        }
+    }
 
-            let ext_dir = entry.path();
-            let manifest = if ext_dir.join("sidex.toml").exists() {
-                read_wasm_extension_manifest(app, &ext_dir)
-            } else {
-                read_extension_manifest(app, &ext_dir)
-            };
-            let Ok(manifest) = manifest else {
-                continue;
-            };
-
-            if disable_ids.contains(&manifest.id)
-                || disable_prefixes.iter().any(|p| manifest.id.starts_with(p))
-            {
-                continue;
-            }
-
-            let replace = match by_id.get(&manifest.id) {
-                Some(existing) => is_version_greater(&manifest.version, &existing.version),
-                None => true,
-            };
-            if replace {
-                by_id.insert(manifest.id.clone(), manifest);
+    // Extensions the user linked from VS Code / VSCodium load in place from there.
+    let linked = read_linked_ids();
+    if !linked.is_empty() {
+        for (id, candidate) in scan_import_sources() {
+            if linked.contains(&id) {
+                consider(Path::new(&candidate.path));
             }
         }
     }
