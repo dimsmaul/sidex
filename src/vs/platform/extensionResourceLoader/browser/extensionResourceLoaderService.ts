@@ -42,6 +42,10 @@ class ExtensionResourceLoaderService extends AbstractExtensionResourceLoaderServ
 	}
 
 	async readExtensionResource(uri: URI): Promise<string> {
+		// Tauri has a real `file:` provider; skip the sidex-asset:// rewrite, which only suits <img>/CSS urls.
+		if (uri.scheme === Schemas.file && (globalThis as any).__SIDEX_TAURI__) {
+			return (await this._fileService.readFile(uri)).value.toString();
+		}
 		uri = FileAccess.uriToBrowserUri(uri);
 
 		if (

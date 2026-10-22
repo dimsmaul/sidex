@@ -645,7 +645,39 @@ export class WebExtensionsScannerService extends Disposable implements IWebExten
 			extensions.set(extension.identifier.id.toLowerCase(), extension);
 		}
 
+		// Tauri: extensions on local disk (SideX's own folder + ones linked from VS Code / VSCodium)
+		// replace any open-vsx entry with the same id, so the UI loads them from disk.
+		if ((globalThis as any).__SIDEX_TAURI__ === true) {
+			for (const extension of await this.scanLocalDiskExtensions(scanOptions)) {
+				extensions.set(extension.identifier.id.toLowerCase(), extension);
+			}
+		}
+
 		return [...extensions.values()];
+	}
+
+	private async scanLocalDiskExtensions(scanOptions?: ScanOptions): Promise<IScannedExtension[]> {
+		const result: IScannedExtension[] = [];
+		try {
+			const { invoke } = await import('@tauri-apps/api/core');
+			const local = await invoke<{ id: string; path: string }[]>('list_installed_extensions');
+			await Promise.allSettled(
+				local.map(async ({ id, path }) => {
+					try {
+						const webExtension = await this.toWebExtension(URI.file(path));
+						const extension = await this.toScannedExtension(webExtension, false);
+						if (extension.isValid || !scanOptions?.skipInvalidExtensions) {
+							result.push(extension);
+						}
+					} catch (error) {
+						this.logService.info(`Skipping local extension ${id} at ${path}.`, getErrorMessage(error));
+					}
+				})
+			);
+		} catch (error) {
+			this.logService.info('Error while listing local extensions.', getErrorMessage(error));
+		}
+		return result;
 	}
 
 	async scanExtensionsUnderDevelopment(): Promise<IExtension[]> {

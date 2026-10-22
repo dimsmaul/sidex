@@ -19,8 +19,11 @@ import {
 	Metadata,
 	InstallOptions,
 	IProductVersion,
-	IAllowedExtensionsService
+	IAllowedExtensionsService,
+	getTargetPlatform
 } from '../../../../platform/extensionManagement/common/extensionManagement.js';
+import { platform } from '../../../../base/common/platform.js';
+import { arch } from '../../../../base/common/process.js';
 import { URI } from '../../../../base/common/uri.js';
 import { Emitter, Event } from '../../../../base/common/event.js';
 import {
@@ -159,7 +162,8 @@ export class WebExtensionManagementService
 	}
 
 	async getTargetPlatform(): Promise<TargetPlatform> {
-		return TargetPlatform.WEB;
+		// In Tauri the extensions run natively, so ask the gallery for native builds (not alpine/web).
+		return (globalThis as any).__SIDEX_TAURI__ ? getTargetPlatform(platform, arch) : TargetPlatform.WEB;
 	}
 
 	protected override async isExtensionPlatformCompatible(extension: IGalleryExtension): Promise<boolean> {
