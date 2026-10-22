@@ -1,20 +1,26 @@
 name: Build (unsigned)
 
-# Secret-free build for forks: no code signing, no updater artifacts,
-# no R2 upload, no GitHub release. Installers are kept as workflow
-# artifacts for 7 days. Runs on push to master (workflow_dispatch only
-# works once this file is on the default branch).
+# Secret-free release build for forks: no code signing, no updater
+# artifacts, no R2 upload. Runs when a v* tag is pushed from master and
+# attaches the installers to a draft GitHub Release for that tag.
 on:
   push:
-    branches: [master]
-  workflow_dispatch:
-
-concurrency:
-  group: build-unsigned-${{ github.ref }}
-  cancel-in-progress: true
+    tags: ['v*']
 
 jobs:
+  verify-master:
+    name: tag is on master
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check tag commit is reachable from master
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/master
+
   build:
+    needs: verify-master
     name: build (${{ matrix.artifact_name }})
     strategy:
       fail-fast: false
@@ -93,3 +99,24 @@ jobs:
           path: ${{ matrix.artifact_path }}
           if-no-files-found: error
           retention-days: 7
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+
+      - name: Create draft GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: SideX ${{ github.ref_name }} (unsigned)
+          draft: true
+          generate_release_notes: true
+          files: installers/**
