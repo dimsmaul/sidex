@@ -124,7 +124,7 @@ async function boot() {
 			nameLong: 'SideX',
 			applicationName: 'sidex',
 			dataFolderName: '.sidex',
-			version: '1.110.0',
+			version: '1.142.0',
 			linkProtectionTrustedDomains: ['https://github.com', 'https://*.github.com', 'https://*.githubusercontent.com']
 		},
 		settingsSyncOptions: {
