@@ -89,7 +89,11 @@ jobs:
 
       # beforeBuildCommand runs `bun run build`; the release config is
       # left out so no updater signing key is required.
+      # "-" = ad-hoc sign the whole .app bundle. Without it only the
+      # binary is linker-signed and macOS reports the app as damaged.
       - name: Build Tauri app
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
         run: bunx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
       - name: Upload installer
