@@ -1,0 +1,47 @@
+name: Build (unsigned macOS)
+
+# Secret-free build for forks: no code signing, no updater artifacts,
+# no R2 upload, no GitHub release. The .dmg is kept as a workflow
+# artifact for 7 days. Runs on push to master (workflow_dispatch only
+# works once this file is on the default branch).
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  macos-arm64:
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Setup built-in extensions
+        run: bash scripts/setup-extensions.sh
+
+      # beforeBuildCommand runs `npm run build`; the release config is
+      # left out so no updater signing key is required.
+      - name: Build Tauri app
+        run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+
+      - name: Upload .dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: sidex-macos-arm64
+          path: target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 7
