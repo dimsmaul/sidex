@@ -7,8 +7,8 @@ Thanks for your interest. SideX was released early specifically so the community
 ```bash
 git clone https://github.com/Sidenai/sidex.git
 cd sidex
-npm install
-npm run tauri dev
+bun install
+bun run tauri dev
 ```
 
 See the [README](./README.md) for full prerequisites. The editor runs standalone with no account of any kind; the AI chat panel additionally needs the agent server built (Go 1.26+) and a model provider of your own — see [AI Agent](./README.md#ai-agent) in the README.
@@ -17,7 +17,7 @@ See the [README](./README.md) for full prerequisites. The editor runs standalone
 
 1. **Fork** the repo
 2. **Create a branch** — `git checkout -b my-fix`
-3. **Make your changes** and test with `npm run tauri dev`
+3. **Make your changes** and test with `bun run tauri dev`
 4. **Submit a PR** with a clear description of what you changed and why
 
 PRs get reviewed as fast as we can. If your change gets merged, you'll be added as a contributor.

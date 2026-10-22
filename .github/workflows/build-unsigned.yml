@@ -22,21 +22,26 @@ jobs:
         with:
           node-version: 24
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Setup built-in extensions
         run: bash scripts/setup-extensions.sh
 
-      # beforeBuildCommand runs `npm run build`; the release config is
+      # beforeBuildCommand runs `bun run build`; the release config is
       # left out so no updater signing key is required.
       - name: Build Tauri app
-        run: npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+        run: bunx tauri build --target aarch64-apple-darwin --bundles app,dmg
 
       - name: Upload .dmg
         uses: actions/upload-artifact@v4

@@ -28,7 +28,7 @@ function writeBuiltinExtensions(descriptors) {
 
 if (!existsSync(extensionsDir)) {
   console.warn(`Extensions directory not found: ${extensionsDir}`);
-  console.warn(`Continuing with built-in theme fallbacks. Run "npm run setup:full" to include the full VS Code extension catalog.`);
+  console.warn(`Continuing with built-in theme fallbacks. Run "bun run setup:full" to include the full VS Code extension catalog.`);
   writeBuiltinExtensions([]);
   process.exit(0);
 }

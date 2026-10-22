@@ -109,18 +109,18 @@ The app looks for a binary at that path automatically when running from a source
 ```bash
 git clone https://github.com/Sidenai/sidex.git
 cd sidex
-npm install
-npm run tauri dev
+bun install
+bun run tauri dev
 ```
 
 ### Build from Source
 
 ```bash
-npm install
-npx tauri build
+bun install
+bunx tauri build
 ```
 
-`npx tauri build` runs the frontend build for you (`npm run build`), which already raises Vite's Node heap limit to 12 GB internally — no `NODE_OPTIONS` needed on a normal machine. If you still hit an out-of-memory error, raise it further yourself with `NODE_OPTIONS="--max-old-space-size=16384"` before the command.
+Requires [Bun](https://bun.sh) for package management and Node.js for the Vite build. `bunx tauri build` runs the frontend build for you (`bun run build`), which already raises Vite's Node heap limit to 12 GB internally — no `NODE_OPTIONS` needed on a normal machine. If you still hit an out-of-memory error, raise it further yourself with `NODE_OPTIONS="--max-old-space-size=16384"` before the command.
 
 First build takes 5–10 minutes (Rust compile time). Pre-built binaries are not distributed yet.
 
