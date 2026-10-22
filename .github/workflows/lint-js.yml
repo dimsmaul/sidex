@@ -2,7 +2,7 @@ name: Lint JS/TS
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
     paths:
       - ".github/workflows/lint-js.yml"
       - "src/**"
@@ -11,7 +11,7 @@ on:
       - "package.json"
       - "bun.lock"
   pull_request:
-    branches: [main]
+    branches: [main, master]
     paths:
       - ".github/workflows/lint-js.yml"
       - "src/**"

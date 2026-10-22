@@ -2,7 +2,7 @@ name: Unused Dependencies
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
     paths:
       - ".github/workflows/udeps.yml"
       - "Cargo.toml"

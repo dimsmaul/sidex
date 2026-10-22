@@ -2,7 +2,7 @@ name: Build Check
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
     paths:
       - ".github/workflows/build.yml"
       - "crates/**"
@@ -11,7 +11,7 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
   pull_request:
-    branches: [main]
+    branches: [main, master]
     paths:
       - ".github/workflows/build.yml"
       - "crates/**"
